@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+
+<body>
+  <div class="container">
+    <div class="toolbox">
+      <button onclick="sb.reset()">重置</button>
+      <button onclick="sb.addRandomNumNode()">添加随机数</button>
+      <button onclick="sb.sort()">排序</button>
+    </div>
+    <div class="sb-box">
+
+    </div>
+  </div>
+  <script>
+    // 工具方法
+    const util = {
+      randomNum(...args) {
+        switch (args.length) {
+          case 1:
+            return parseInt(Math.random() * args[0] + 1, 10);
+            break;
+          case 2:
+            return parseInt(Math.random() * (args[1] - args[0] + 1) + args[0], 10);
+            break;
+          default:
+            return 0;
+            break;
+        }
+      },
+      addClass(el, ...args) {
+        el.classList.add(...args)
+      },
+      removeClass(el, ...args) {
+        el.classList.remove(...args)
+      },
+      toggleClass(el, className) {
+        el.classList.toggle(className)
+      },
+      createElement({ tagName, content, className }) {
+        let el = document.createElement(tagName)
+        el.innerHTML = content
+        if (className) {
+          util.addClass(el, className)
+        }
+        return el
+      },
+      appendChild(p, s) {
+        p.appendChild(s)
+      }
+    }
+
+
+
+    // 业务逻辑
+    let sb = (function ({ el }) {
+      console.log(el, 333)
+      // 动画轨迹队列
+      const historyQueue = []
+
+      let parentEl = document.querySelector(el)
+
+      // 默认数字列表
+      let data = []
+
+      // 快排
+      let __quickSort = function ({ data, startIndex = 0, endIndex = data.length - 1 }) {
+        if (startIndex >= endIndex) {
+          return
+        }
+        // p为初始哨兵值，j为当前分区最终哨兵索引值
+        const p = data[endIndex]
+        let j = startIndex
+        for (let i = startIndex; i < endIndex; i++) {
+          if (p > data[i]) {
+            let t = data[i]
+            data[i] = data[j]
+            data[j] = t
+            j++
+          }
+        }
+        let t = data[endIndex]
+        data[endIndex] = data[j]
+        data[j] = t
+        __quickSort({
+          data,
+          startIndex: j + 1,
+          endIndex
+        })
+        __quickSort({
+          data,
+          startIndex,
+          endIndex: j - 1
+        })
+      }
+      let __initRandomData = function () {
+        // 初始化随机数据
+        data = Array(util.randomNum(8, 15)).fill(0).map(() => {
+          return util.randomNum(1, 100)
+        })
+      }
+      let __initHtml = function () {
+        parentEl.innerHTML = ''
+        let dfEl = document.createDocumentFragment()
+        data.forEach((item) => {
+          util.appendChild(dfEl, util.createElement({
+            tagName: 'div',
+            content: item
+          }))
+        })
+        util.appendChild(parentEl, dfEl)
+      }
+      return {
+        addRandomNumNode() {
+          // 添加随机数节点
+          let num = util.randomNum(1, 100)
+          data.push(num)
+          util.appendChild(parentEl, util.createElement({
+            tagName: 'div',
+            content: num
+          }))
+        },
+        reset() {
+          // 重置
+          __initRandomData()
+          __initHtml()
+        },
+        sort() {
+          // 排序
+          __quickSort({ data })
+          __initHtml()
+        },
+        find() {
+          // 查找某节点
+        },
+        init: function () {
+          __initRandomData()
+          __initHtml()
+        }
+      }
+    })({
+      el: '.sb-box'
+    })
+    sb.init()
+
+  </script>
+</body>
+
+</html>
