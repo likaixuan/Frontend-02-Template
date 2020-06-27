@@ -68,13 +68,14 @@
       <button onclick="sb.sort({order:'desc'})">降序排列</button>
       <button onclick="sb.addRandomNumNode()">添加随机数</button>
       <button onclick="sb.togglePlay()">播放/暂停</button>
-      <button onclick="sb.back()">后退</button>
+      <button onclick="sb.back()">后退一步</button>
     </div>
     <div class="sb-box">
 
     </div>
   </div>
   <script>
+    
     // 工具方法
     const util = {
       randomNum(...args) {
@@ -118,8 +119,6 @@
       }
     }
 
-
-
     // 业务逻辑
     let sb = (function ({ el }) {
 
@@ -139,7 +138,7 @@
       let rollHistoryStack = []
 
       // 播放速度 （ms）、定时器id
-      let animSpeed = 200
+      let animSpeed = 500
       let timerId
 
       // 默认宽度、左边距
@@ -218,61 +217,46 @@
       // 回放出栈
       const __popRollHistoryQueue = function () {
         // 回放出栈同时 入轨迹队 实现倒退
+        console.log(rollHistoryStack, '栈')
         const t = rollHistoryStack.pop()
         rollHistoryQueue.unshift(t)
         return t
       }
 
-      // 播放
-      const play = function () {
-        clearInterval(timerId)
-        timerId = setInterval(() => {
-          const item = __shiftRollHistoryQueue()
-          // console.log('播放轨迹=', item)
-          if (ROLL_TYPE_CMP === item.type) {
-            const t = document.querySelector(`.${NODE_STATE_MAP[NODE_STATE_CMP].className}`)
-            if (t) {
-              util.removeClass(t, NODE_STATE_MAP[NODE_STATE_CMP].className)
-            }
-            util.addClass(vNodeList[item.index], NODE_STATE_MAP[NODE_STATE_CMP].className)
-          } else if (ROLL_TYPE_EXCHANGE === item.type) {
-            // console.log(vNodeList[item.index1].style.left)
-            // console.log('交换索引', item.index1, '➡️', item.index2)
-
-
-
-            const t1 = vNodeList[item.index1]
-            const t2 = vNodeList[item.index2]
-            const t1Left = t1.style.left
-            util.setElementStyle(t1, {
-              left: t2.style.left
-            })
-            util.setElementStyle(t2, {
-              left: t1Left
-            })
-            // vNodeList
-            vNodeList.splice(item.index1, 1, t2)
-            vNodeList.splice(item.index2, 1, t1)
-          } else if (ROLL_TYPE_TEMP === item.type) {
-            const t = document.querySelector(`.${NODE_STATE_MAP[NODE_STATE_TEMP].className}`)
-            if (t) {
-              util.removeClass(t, NODE_STATE_MAP[NODE_STATE_TEMP].className)
-            }
-            util.addClass(vNodeList[item.index], NODE_STATE_MAP[NODE_STATE_TEMP].className)
-          } else if (ROLL_TYPE_BOSS === item.type) {
-            const t = document.querySelector(`.${NODE_STATE_MAP[NODE_STATE_BOSS].className}`)
-            if (t) {
-              util.removeClass(t, NODE_STATE_MAP[NODE_STATE_BOSS].className)
-            }
-            util.addClass(vNodeList[item.index], NODE_STATE_MAP[NODE_STATE_BOSS].className)
+      // 播放一帧
+      const __nextStep = function (item) {
+        if (ROLL_TYPE_CMP === item.type) {
+          const t = document.querySelector(`.${NODE_STATE_MAP[NODE_STATE_CMP].className}`)
+          if (t) {
+            util.removeClass(t, NODE_STATE_MAP[NODE_STATE_CMP].className)
           }
-
-          // 播放完成
-          if (rollHistoryQueue.length === 0) {
-            clearInterval(timerId)
-            __onSortStateChange(SORT_STATE_COMPLETED)
+          util.addClass(vNodeList[item.index], NODE_STATE_MAP[NODE_STATE_CMP].className)
+        } else if (ROLL_TYPE_EXCHANGE === item.type) {
+          const t1 = vNodeList[item.index1]
+          const t2 = vNodeList[item.index2]
+          const t1Left = t1.style.left
+          util.setElementStyle(t1, {
+            left: t2.style.left
+          })
+          util.setElementStyle(t2, {
+            left: t1Left
+          })
+          vNodeList.splice(item.index1, 1, t2)
+          vNodeList.splice(item.index2, 1, t1)
+        } else if (ROLL_TYPE_TEMP === item.type) {
+          const t = document.querySelector(`.${NODE_STATE_MAP[NODE_STATE_TEMP].className}`)
+          if (t) {
+            util.removeClass(t, NODE_STATE_MAP[NODE_STATE_TEMP].className)
           }
-        }, animSpeed)
+          util.addClass(vNodeList[item.index], NODE_STATE_MAP[NODE_STATE_TEMP].className)
+        } else if (ROLL_TYPE_BOSS === item.type) {
+          const t = document.querySelector(`.${NODE_STATE_MAP[NODE_STATE_BOSS].className}`)
+          if (t) {
+            util.removeClass(t, NODE_STATE_MAP[NODE_STATE_BOSS].className)
+          }
+          util.addClass(vNodeList[item.index], NODE_STATE_MAP[NODE_STATE_BOSS].className)
+        }
+
       }
 
       // 排序状态发生改变（就绪、播放中、暂停中、已完成）
@@ -315,7 +299,7 @@
           addBtn.disabled = true
           ctlBtn.innerHTML = '暂停'
           ctlBtn.disabled = false
-          backBtn.dataset = false
+          backBtn.disabled = false
           play()
         } else if (state === SORT_STATE_PAUSED) {
           // 已暂停 
@@ -323,13 +307,13 @@
           // 增加随机数 禁用
           // 控制 文字为播放 启用
           // 后退 启用
+          clearInterval(timerId)
           ascBtn.disabled = true
           descBtn.disabled = true
           addBtn.disabled = true
           ctlBtn.innerHTML = '播放'
           ctlBtn.disabled = false
-          backBtn.dataset = false
-          clearInterval(timerId)
+          backBtn.disabled = false
         } else if (state === SORT_STATE_COMPLETED) {
           // 已完成 
           // 播放操作 启用
@@ -345,20 +329,6 @@
         }
       }
 
-      // 回退播放
-      const back = function () {
-
-      }
-
-      // 暂停与播放切换
-      const togglePlay = function () {
-        if (currentSortState === SORT_STATE_PAUSED) {
-          __onSortStateChange(SORT_STATE_PLAYING)
-        } else if (currentSortState === SORT_STATE_PLAYING) {
-          __onSortStateChange(SORT_STATE_PAUSED)
-        }
-
-      }
       /**
        * 快排
        * @param {string} order  可取值为asc|desc 升序、降序
@@ -395,10 +365,11 @@
 
             }
             j++
+            // TODO 有时间换成指向型 而不是背景色
             // 占位
-            __pushRollHistoryQueue(ROLL_TYPE_TEMP, {
-              index: j
-            })
+            // __pushRollHistoryQueue(ROLL_TYPE_TEMP, {
+            //   index: j
+            // })
           }
 
         }
@@ -488,6 +459,38 @@
         }, 50)
       }
 
+      // 播放
+      const play = function () {
+        clearInterval(timerId)
+        timerId = setInterval(() => {
+          __nextStep(__shiftRollHistoryQueue())
+          // 播放完成
+          if (rollHistoryQueue.length === 0) {
+            clearInterval(timerId)
+            __onSortStateChange(SORT_STATE_COMPLETED)
+          }
+        }, animSpeed)
+      }
+      // 回退播放
+      const back = function () {
+        // 回退时自动暂停
+        if (rollHistoryStack.length > 0) {
+          __onSortStateChange(SORT_STATE_PAUSED)
+          __nextStep(__popRollHistoryQueue())
+        }
+
+      }
+
+      // 暂停与播放切换
+      const togglePlay = function () {
+        if (currentSortState === SORT_STATE_PAUSED) {
+          __onSortStateChange(SORT_STATE_PLAYING)
+        } else if (currentSortState === SORT_STATE_PLAYING) {
+          __onSortStateChange(SORT_STATE_PAUSED)
+        }
+
+      }
+
       // 重置
       const reset = function () {
         // 重置
@@ -525,9 +528,7 @@
       el: '.sb-box'
     })
 
-
     sb.init()
-
   </script>
 </body>
 
