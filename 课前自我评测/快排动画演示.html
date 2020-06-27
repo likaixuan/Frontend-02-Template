@@ -5,14 +5,70 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Document</title>
+  <style>
+    body,
+    html {
+      margin: 0px;
+      padding: 0px;
+    }
+
+    .container {
+      padding: 16px 32px;
+    }
+
+    .sb-box {
+      position: relative;
+      margin-top: 32px;
+      height: 500px;
+    }
+
+    .sb-box .sort-item {
+      position: absolute;
+      bottom: 0px;
+      height: 0px;
+      width: 0px;
+      min-height: 20px;
+      transition: all 0.3s;
+      left: 0px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(0, 0, 0, 0.3);
+      box-sizing: border-box;
+      border-radius: 10px 10px 0px 0px;
+    }
+
+
+    /* 比较 */
+    .sb-box .sort-item.bg-cmp {
+      background: #409EFF;
+      color: white;
+    }
+
+    /* 当前哨兵 */
+    .sb-box .sort-item.bg-boss {
+      color: white;
+      background: #f56c6c;
+    }
+
+    /* 占位 */
+    .sb-box .sort-item.bg-temp {
+      color: white;
+      background: black;
+    }
+  </style>
 </head>
 
 <body>
   <div class="container">
     <div class="toolbox">
       <button onclick="sb.reset()">重置</button>
+      <!-- TODO 调整按钮位置需改动 __onSortStateChange 方法代码 -->
+      <button onclick="sb.sort({order:'asc'})">升序排列</button>
+      <button onclick="sb.sort({order:'desc'})">降序排列</button>
       <button onclick="sb.addRandomNumNode()">添加随机数</button>
-      <button onclick="sb.sort()">排序</button>
+      <button onclick="sb.togglePlay()">播放/暂停</button>
+      <button onclick="sb.back()">后退</button>
     </div>
     <div class="sb-box">
 
@@ -43,9 +99,15 @@
       toggleClass(el, className) {
         el.classList.toggle(className)
       },
-      createElement({ tagName, content, className }) {
+      setElementStyle(el, style = {}) {
+        for (const key in style) {
+          el.style[key] = style[key]
+        }
+      },
+      createElement({ tagName, content = "", className, style = {} }) {
         let el = document.createElement(tagName)
         el.innerHTML = content
+        util.setElementStyle(el, style)
         if (className) {
           util.addClass(el, className)
         }
@@ -60,93 +122,410 @@
 
     // 业务逻辑
     let sb = (function ({ el }) {
-      console.log(el, 333)
-      // 动画轨迹队列
-      const historyQueue = []
 
-      let parentEl = document.querySelector(el)
+      // 排序项dom容器
+      const PARENT_EL = document.querySelector(el)
 
       // 默认数字列表
       let data = []
 
-      // 快排
-      let __quickSort = function ({ data, startIndex = 0, endIndex = data.length - 1 }) {
+      // 虚拟排序项dom列表和实际dom顺序无关
+      let vNodeList = []
+
+      // 动画轨迹队列 正向播放
+      let rollHistoryQueue = []
+
+      // 动画轨迹播放栈 实现倒播
+      let rollHistoryStack = []
+
+      // 播放速度 （ms）、定时器id
+      let animSpeed = 200
+      let timerId
+
+      // 默认宽度、左边距
+      const PX = 48
+      const MARGIN_LEFT = 32
+
+      // 排序状态
+      const SORT_STATE_READY = 0 // 已就绪
+      const SORT_STATE_PLAYING = 1 // 运行中
+      const SORT_STATE_PAUSED = 2 // 已暂停
+      const SORT_STATE_COMPLETED = 3 // 已完成
+      let currentSortState = SORT_STATE_READY
+
+      // 节点状态 
+      const NODE_STATE_BOSS = 0 // 哨兵节点
+      const NODE_STATE_CMP = 1 // 比较节点
+      const NODE_STATE_TEMP = 2 // 比较节点
+
+      // 轨迹类别
+      const ROLL_TYPE_CMP = 0 // 比较节点发生变化
+      const ROLL_TYPE_EXCHANGE = 1 // 交换两个节点
+      const ROLL_TYPE_BOSS = 2 // 哨兵 节点变化
+      const ROLL_TYPE_TEMP = 3 // 临时帮哨兵占位的节点 
+
+      const NODE_STATE_MAP = {
+        [NODE_STATE_BOSS]: {
+          className: 'bg-boss'
+        },
+        [NODE_STATE_CMP]: {
+          className: 'bg-cmp'
+        },
+        [NODE_STATE_TEMP]: {
+          className: 'bg-temp'
+        },
+      }
+
+      // 排序项模板
+      const SORT_ITEM_TPL = {
+        tagName: 'div',
+        className: 'sort-item',
+        content: ''
+      }
+
+      // 重置运行时产生的全部数据与事件(调用之后无任何运行产生的副作用，可放心init)
+      const __resetRuntimeDataAndEvent = function () {
+        // 排序数据
+        data = []
+        // dom
+        PARENT_EL.innerHTML = ''
+        // 动画队列、栈
+        rollHistoryQueue = []
+        rollHistoryStack = []
+        // 逻辑排序节点顺序
+        vNodeList = []
+
+        clearInterval(timerId)
+      }
+
+      // 轨迹入队
+      const __pushRollHistoryQueue = function (type, options) {
+        const item = {
+          type,
+          ...options
+        }
+        rollHistoryQueue.push(item)
+      }
+
+      // 轨迹出队
+      const __shiftRollHistoryQueue = function () {
+        // 轨迹出队同时回放入栈 可实现倒退功能
+        const t = rollHistoryQueue.shift()
+        rollHistoryStack.push(t)
+        return t
+      }
+
+      // 回放出栈
+      const __popRollHistoryQueue = function () {
+        // 回放出栈同时 入轨迹队 实现倒退
+        const t = rollHistoryStack.pop()
+        rollHistoryQueue.unshift(t)
+        return t
+      }
+
+      // 播放
+      const play = function () {
+        clearInterval(timerId)
+        timerId = setInterval(() => {
+          const item = __shiftRollHistoryQueue()
+          // console.log('播放轨迹=', item)
+          if (ROLL_TYPE_CMP === item.type) {
+            const t = document.querySelector(`.${NODE_STATE_MAP[NODE_STATE_CMP].className}`)
+            if (t) {
+              util.removeClass(t, NODE_STATE_MAP[NODE_STATE_CMP].className)
+            }
+            util.addClass(vNodeList[item.index], NODE_STATE_MAP[NODE_STATE_CMP].className)
+          } else if (ROLL_TYPE_EXCHANGE === item.type) {
+            // console.log(vNodeList[item.index1].style.left)
+            // console.log('交换索引', item.index1, '➡️', item.index2)
+
+
+
+            const t1 = vNodeList[item.index1]
+            const t2 = vNodeList[item.index2]
+            const t1Left = t1.style.left
+            util.setElementStyle(t1, {
+              left: t2.style.left
+            })
+            util.setElementStyle(t2, {
+              left: t1Left
+            })
+            // vNodeList
+            vNodeList.splice(item.index1, 1, t2)
+            vNodeList.splice(item.index2, 1, t1)
+          } else if (ROLL_TYPE_TEMP === item.type) {
+            const t = document.querySelector(`.${NODE_STATE_MAP[NODE_STATE_TEMP].className}`)
+            if (t) {
+              util.removeClass(t, NODE_STATE_MAP[NODE_STATE_TEMP].className)
+            }
+            util.addClass(vNodeList[item.index], NODE_STATE_MAP[NODE_STATE_TEMP].className)
+          } else if (ROLL_TYPE_BOSS === item.type) {
+            const t = document.querySelector(`.${NODE_STATE_MAP[NODE_STATE_BOSS].className}`)
+            if (t) {
+              util.removeClass(t, NODE_STATE_MAP[NODE_STATE_BOSS].className)
+            }
+            util.addClass(vNodeList[item.index], NODE_STATE_MAP[NODE_STATE_BOSS].className)
+          }
+
+          // 播放完成
+          if (rollHistoryQueue.length === 0) {
+            clearInterval(timerId)
+            __onSortStateChange(SORT_STATE_COMPLETED)
+          }
+        }, animSpeed)
+      }
+
+      // 排序状态发生改变（就绪、播放中、暂停中、已完成）
+      let __onSortStateChange = function (state) {
+        // TODO 懒得写了 改按钮顺序 对应js索引要改一改
+        currentSortState = state
+        const buttons = document.querySelectorAll('button')
+        // 播放系列
+        const ascBtn = buttons[1]
+        const descBtn = buttons[2]
+        // 添加随机数
+        const addBtn = buttons[3]
+        // 控制按钮
+        const ctlBtn = buttons[4]
+        // 后退按钮
+        const backBtn = buttons[5]
+
+
+        if (state === SORT_STATE_READY) {
+          // 默认情况或重置
+          // 播放操作 启用
+          // 增加随机数 启用
+          // 控制 文字为播放/暂停 禁用
+          // 后退 禁用
+          ascBtn.disabled = false
+          descBtn.disabled = false
+          addBtn.disabled = false
+          ctlBtn.innerHTML = '播放/暂停'
+          ctlBtn.disabled = true
+          backBtn.disabled = true
+
+        } else if (state === SORT_STATE_PLAYING) {
+          // 运行中 
+          // 播放操作 禁用
+          // 增加随机数 禁用
+          // 控制 文字为暂停 启用
+          // 后退 启用
+          ascBtn.disabled = true
+          descBtn.disabled = true
+          addBtn.disabled = true
+          ctlBtn.innerHTML = '暂停'
+          ctlBtn.disabled = false
+          backBtn.dataset = false
+          play()
+        } else if (state === SORT_STATE_PAUSED) {
+          // 已暂停 
+          // 播放操作 禁用
+          // 增加随机数 禁用
+          // 控制 文字为播放 启用
+          // 后退 启用
+          ascBtn.disabled = true
+          descBtn.disabled = true
+          addBtn.disabled = true
+          ctlBtn.innerHTML = '播放'
+          ctlBtn.disabled = false
+          backBtn.dataset = false
+          clearInterval(timerId)
+        } else if (state === SORT_STATE_COMPLETED) {
+          // 已完成 
+          // 播放操作 启用
+          // 增加随机数 启用
+          // 控制 文字为播放/暂停 禁用
+          // 后退 启用
+          ascBtn.disabled = false
+          descBtn.disabled = false
+          addBtn.disabled = false
+          ctlBtn.innerHTML = '播放/暂停'
+          ctlBtn.disabled = true
+          backBtn.disabled = false
+        }
+      }
+
+      // 回退播放
+      const back = function () {
+
+      }
+
+      // 暂停与播放切换
+      const togglePlay = function () {
+        if (currentSortState === SORT_STATE_PAUSED) {
+          __onSortStateChange(SORT_STATE_PLAYING)
+        } else if (currentSortState === SORT_STATE_PLAYING) {
+          __onSortStateChange(SORT_STATE_PAUSED)
+        }
+
+      }
+      /**
+       * 快排
+       * @param {string} order  可取值为asc|desc 升序、降序
+       */
+      const __quickSort = function ({ data, startIndex = 0, endIndex = data.length - 1, order = 'asc' }) {
         if (startIndex >= endIndex) {
           return
         }
         // p为初始哨兵值，j为当前分区最终哨兵索引值
         const p = data[endIndex]
         let j = startIndex
+
+        // 哨兵
+        __pushRollHistoryQueue(ROLL_TYPE_BOSS, {
+          index: endIndex
+        })
+
         for (let i = startIndex; i < endIndex; i++) {
-          if (p > data[i]) {
-            let t = data[i]
-            data[i] = data[j]
-            data[j] = t
+          // 比较
+          __pushRollHistoryQueue(ROLL_TYPE_CMP, {
+            index: i
+          })
+          if ('asc' === order && p > data[i] || 'desc' === order && p < data[i]) {
+            if (i !== j) {
+              __pushRollHistoryQueue(ROLL_TYPE_EXCHANGE, {
+                index1: i,
+                index2: j
+              })
+              let t = data[i]
+              data[i] = data[j]
+              data[j] = t
+              // 交换
+              console.log('交换索引', i, '➡️', j, '-data=', data)
+
+            }
             j++
+            // 占位
+            __pushRollHistoryQueue(ROLL_TYPE_TEMP, {
+              index: j
+            })
           }
+
         }
-        let t = data[endIndex]
-        data[endIndex] = data[j]
-        data[j] = t
+        // 交换
+        if (endIndex != j) {
+          __pushRollHistoryQueue(ROLL_TYPE_EXCHANGE, {
+            index1: endIndex,
+            index2: j
+          })
+          let t = data[endIndex]
+          data[endIndex] = data[j]
+          data[j] = t
+          console.log('哨兵交换索引', endIndex, '➡️', j, '-data=', data)
+        }
+
         __quickSort({
           data,
           startIndex: j + 1,
-          endIndex
+          endIndex,
+          order
         })
         __quickSort({
           data,
           startIndex,
-          endIndex: j - 1
+          endIndex: j - 1,
+          order
         })
+
       }
-      let __initRandomData = function () {
-        // 初始化随机数据
-        data = Array(util.randomNum(8, 15)).fill(0).map(() => {
+
+      // 初始化随机数据
+      const __initRandomData = function () {
+        data = Array(util.randomNum(5, 10)).fill(0).map(() => {
           return util.randomNum(1, 100)
         })
       }
-      let __initHtml = function () {
-        parentEl.innerHTML = ''
-        let dfEl = document.createDocumentFragment()
-        data.forEach((item) => {
-          util.appendChild(dfEl, util.createElement({
-            tagName: 'div',
-            content: item
-          }))
+
+      // 初始化html
+      const __initHtml = function () {
+        PARENT_EL.innerHTML = ''
+        vNodeList = []
+        const dfEl = document.createDocumentFragment()
+        data.forEach((num, index) => {
+          const el = util.createElement({
+            ...SORT_ITEM_TPL, content: num, style: {
+              width: `${PX}px`,
+              left: `${index * (PX + MARGIN_LEFT)}px`
+            }
+          })
+          vNodeList.push(el)
+          util.appendChild(dfEl, el)
         })
-        util.appendChild(parentEl, dfEl)
+        util.appendChild(PARENT_EL, dfEl)
+
+        const MAX = Math.max(...data)
+
+        setTimeout(() => {
+          data.forEach((num, index) => {
+            const t = parseInt(num / MAX * 100, 10)
+            util.setElementStyle(vNodeList[index], {
+              height: `${t}%`
+            })
+          })
+        }, 50)
+
+      }
+
+      // 添加随机节点
+      const addRandomNumNode = function () {
+        // 添加随机数节点
+        let num = util.randomNum(1, 100)
+        data.push(num)
+        const MAX = Math.max(...data)
+        let el = util.createElement({
+          ...SORT_ITEM_TPL, content: num, style: {
+            width: `${PX}px`,
+            left: `${(data.length - 1) * (PX + MARGIN_LEFT)}px`
+          }
+        })
+        vNodeList.push(el)
+        util.appendChild(PARENT_EL, el)
+        setTimeout(() => {
+          const t = parseInt(num / MAX * 100, 10)
+          util.setElementStyle(el, {
+            height: `${t}%`
+          })
+        }, 50)
+      }
+
+      // 重置
+      const reset = function () {
+        // 重置
+        __onSortStateChange(SORT_STATE_READY)
+        __resetRuntimeDataAndEvent()
+        init()
+      }
+
+      //排序
+      const sort = function ({ order = 'asc' }) {
+        clearInterval(timerId)
+        __onSortStateChange(SORT_STATE_PLAYING)
+        // 动画队列、栈
+        rollHistoryQueue = []
+        rollHistoryStack = []
+        __quickSort({ data, order })
+        play()
+      }
+
+      //初始化
+      const init = function () {
+        __onSortStateChange(SORT_STATE_READY)
+        __initRandomData()
+        __initHtml()
       }
       return {
-        addRandomNumNode() {
-          // 添加随机数节点
-          let num = util.randomNum(1, 100)
-          data.push(num)
-          util.appendChild(parentEl, util.createElement({
-            tagName: 'div',
-            content: num
-          }))
-        },
-        reset() {
-          // 重置
-          __initRandomData()
-          __initHtml()
-        },
-        sort() {
-          // 排序
-          __quickSort({ data })
-          __initHtml()
-        },
-        find() {
-          // 查找某节点
-        },
-        init: function () {
-          __initRandomData()
-          __initHtml()
-        }
+        addRandomNumNode,
+        togglePlay,
+        back,
+        reset,
+        sort,
+        init
       }
     })({
       el: '.sb-box'
     })
+
+
     sb.init()
 
   </script>
